@@ -5,15 +5,16 @@ const logger = require('./loggerLib')
 const events = require('events')
 const eventEmitter = new events.EventEmitter()
 const ChatModel = mongoose.model('Chat')
+const redisLib = require('./redisLib')
 
 const tokenLib = require('./tokenLib')
 const check = require('./checkLib')
 const response = require('./responseLib')
 
 let setServer = (server) =>{
-    let allOnlineUsers = []
+    // let allOnlineUsers = []
     let io = socketio.listen(server)
-    let myIo = io.of('/chat')  //namespace
+    let myIo = io.of('')  //namespace
 
     myIo.on('connection',(socket) => {
         console.log('on connection -- emitting verify user')
@@ -30,16 +31,31 @@ let setServer = (server) =>{
                     // this will be used through out the socket
                     socket.userId = currentUser.userId
                     let fullName =`${currentUser.firstName} ${currentUser.lastName}`
-                    console.log(`${fullName} is online`)
+                    let key = currentUser.userId
+                    let value = fullName
+                    let setUserOnline = redisLib.setANewOnlineUserInHash("onlineUsers",key,value,(err,result)=>{
+                        if(err){
+                            console.log('some error occured')
+                        } else {
+                            redisLib.getAllUsersInHash('onlineUsers',(err,result)=>{
+                                console.log('--inside getAllUsersInHash function---')
+                                if(err){
+                                    console.log(err)
+                                } else {
+                                    console.log(`${fullName} is online`)
+                                    socket.room = 'edChat'
+                                    socket.join(socket.room)
+                                    socket.to(socket.room).broadcast.emit('online-user-list',result)
+                                }
+                            })
+                        }
+                    })
+                    // console.log(`${fullName} is online`)
                     // socket.emit(currentUser.userId,"You are online")
 
-                    let userObj = {userId : currentUser.userId, fullName : fullName}
-                    allOnlineUsers.push(userObj)
-                    console.log(allOnlineUsers)
-
-                    socket.room = 'edChat'
-                    socket.join(socket.room)
-                    socket.to(socket.room).broadcast.emit('online-user-list',allOnlineUsers)
+                    // let userObj = {userId : currentUser.userId, fullName : fullName}
+                    // allOnlineUsers.push(userObj)
+                    // console.log(allOnlineUsers)
                 }
 
             })
@@ -47,12 +63,21 @@ let setServer = (server) =>{
         socket.on('disconnect', ()=>{
             console.log('user is disconected')
             console.log(socket.userId)
-            var removeIndex = allOnlineUsers.map(function(user){return user.userId}).indexOf(socket.userId)
-            allOnlineUsers.splice(removeIndex,1)
-            console.log(allOnlineUsers)
+            // var removeIndex = allOnlineUsers.map(function(user){return user.userId}).indexOf(socket.userId)
+            // allOnlineUsers.splice(removeIndex,1)
+            // console.log(allOnlineUsers)
 
-            socket.to(socket.room).broadcast.emit('online-user-list',allOnlineUsers)
-            socket.leave(socket.room)
+            if(socket.userId){
+                redisLib.deleteUserFromHash('onlineUsers',socket.userId)
+                redisLib.getAllUsersInHash('onlineUsers',(err,result)=>{
+                    if(err){
+                        console.log(err)
+                    } else {
+                        socket.leave(socket.room)
+                        socket.to(socket.room).broadcast.emit('online-user-list',result)
+                    }
+                })
+            }
         })
 
         socket.on('chat-msg',(data)=>{
